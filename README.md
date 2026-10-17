@@ -1,36 +1,48 @@
-# 🏛️ PoolHub — কেন্দ্রীয়-প্রক্সি-ব্যবস্থাপনা (আলাদা-অ্যাডন)
+# 🏛️ PoolHub
 
-ধ্রুব-প্রক্সি-স্ক্যান → alive-পুল (৩০০) → **৫-সাব-স্পেস** (condition-pass=bench) → **প্রতি-স্পেস-API-কী** → গ্রাহক-অ্যাপ-নিজ-কী-দিয়ে-সংগ্রহ+ব্যবহার।
-
-## কাঠামো
+Centralized proxy management for the Stremio addon family — one service that harvests, verifies and serves proxies to every client app through isolated, keyed sub-spaces.
 
 ```
-স্ক্যান (TheSpeedX/monosans/proxyscrape/proxifly) → পুল (alive, ৩০০-ক্যাপ)
-   → ৫-সাব-স্পেস: toonworld4all · raretoons · vidy · moviebox · multimovies
-      শর্ত: robots+wp-admin / robots+wp-admin / seed-API / টোকেন-সংগ্রহ (x-user-JWT) / resolve-json
-   → প্রতি-স্পেসে-ইউনিক-কী (poolhub_keys.json, psk-…)
-   → গ্রাহক: vidy [vidy·moviebox·multimovies] · রেজলভার [toonworld4all·raretoons]
+harvest (public lists) → alive pool (cap 300) → 5 sub-spaces (condition-pass = benched)
+   → per-space unique API key → client apps fetch with their own key
 ```
 
-**প্রক্সি-নীতি**: প্রক্সি=শুধু-IP/জিও-ফ্ল্যাগ-বাইপাস (টোকেন/API/ম্যানিফেস্ট, বডি-ক্যাপ-২৫৬KB) — **মিডিয়া-প্লেব্যাক-কখনো-প্রক্সি-দিয়ে-নয়**; প্লেয়ার-সরাসরি-CDN।
+## Sub-spaces
+
+| Space | Condition | Client |
+|---|---|---|
+| `toonworld4all` | robots + `wp-admin` signature | resolver bridge |
+| `raretoons` | robots + `wp-admin` signature | resolver bridge |
+| `vidy` | seed API answers `"seed"` | vidy addon |
+| `moviebox` | signed POST → `x-user` JWT (token collection, 83% pass) | vidy addon (MovieBox) |
+| `multimovies` | resolve-JSON answers | vidy addon |
+
+## Proxy policy
+
+Proxies are for **IP/geo-flag bypass only** (tokens, API calls, robots, small manifest text — 256KB body cap). **Media playback never goes through a proxy**; players always stream CDN-direct.
 
 ## API
 
-| রুট | বিবরণ |
+| Route | Description |
 |---|---|
-| `GET /health` | পুল+স্পেস+খরচ-গণক |
-| `GET /spaces?key=` | কী=স্পেস-নির্ধারক (শুধু-নিজ-স্পেস); অ্যাডমিন-টোকেনে-সব |
-| `POST /register` | অ্যাপ-নিজ-শর্ত-নিবন্ধন (কী বা src) |
-| `GET /fetch?src=&url=&key=` | নিজ-স্পেস-px-দিয়ে-ফেচ |
-| `GET /pick?src=&n=&key=` | নিজ-স্পেসের-সেরা-px |
-| `POST /report` | গ্রাহক-প্রমাণ-ফিড (px, ok, ms, src) |
-| `POST /token` (অ্যাডমিন) | টোকেন-ইউজার → `u:<name>`-স্পেস + `/my/*` |
+| `GET /health` | pool + spaces + usage counters |
+| `GET /spaces?key=` | key = space selector (only its own space); admin token sees all |
+| `POST /register` | app declares its space condition (key or `src`) |
+| `GET /fetch?src=&url=&key=` | fetch a URL through the space's best exits |
+| `GET /pick?src=&n=&key=` | the space's best proxies (default 12, cap 40) |
+| `POST /report` | client proof feed (`px`, `ok`, `ms`, `src`) |
+| `POST /token` (admin) | token user → `u:<name>` space + `/my/*` routes |
 
-অ্যাডমিন-টোকেন: `POOLHUB_ADMIN_TOKEN` env বা `poolhub_admin.txt` (অটো-জেন)।
+Admin token: `POOLHUB_ADMIN_TOKEN` env or auto-generated `poolhub_admin.txt`.
 
-## চালানো
+## Run
 
-```bash
-PORT=8399 node server.js          # লোকাল
-git push dokku HEAD:master        # beamup: 3404d3c5dc63-poolhub
 ```
+PORT=8399 node server.js        # local
+```
+
+Scaling knobs (v1.3.7): checker wave = 80 proxies every 8s; enrichment every 90s (600 candidates, 200 batches); `/pick` cap 40.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
