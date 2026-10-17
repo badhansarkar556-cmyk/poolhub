@@ -9,7 +9,7 @@
 const http = require('http'), https = require('https'), net = require('net'), tls = require('tls'), crypto = require('crypto');
 const fs = require('fs'), path = require('path');
 const { URL } = require('url');
-const VERSION = '1.3.6';
+const VERSION = '1.3.7';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const PORT = Number(process.env.PORT || 8399);
 const PX_CAP = 300, DIR = __dirname;
@@ -171,7 +171,7 @@ async function wave() { // v1.2: প্রতি-ঢেউয়ে-সর্ব
   if (busy || !POOL.length) return; busy = true;
   try {
     const tnow = Date.now();
-    const wl = POOL.filter(c => (PX_COOL.get(c.px) || 0) <= tnow).sort((a, b) => (PX_LASTOK.get(a.px) || 0) - (PX_LASTOK.get(b.px) || 0)).slice(0, 30);
+    const wl = POOL.filter(c => (PX_COOL.get(c.px) || 0) <= tnow).sort((a, b) => (PX_LASTOK.get(a.px) || 0) - (PX_LASTOK.get(b.px) || 0)).slice(0, 80); // v1.3.7 (ইউজার: আরও-আক্রমণাত্মক): 30→80 — পুল-৩০০ পূর্ণ-সোজা ~৪-ঢেউয়ে (~৪০সে)
     if (!wl.length) return;
     CHK++;
     const SKS = Object.keys(SPACES);
@@ -219,8 +219,8 @@ async function enrich() {
     const have = new Set(POOL.map(c => c.px));
     const cands = [...new Set((txts.join('\n').match(/\b\d{1,3}(?:\.\d{1,3}){3}:\d{2,5}\b/g) || [])).values()].filter(px => !have.has(px));
     for (let i = cands.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const w = cands[i]; cands[i] = cands[j]; cands[j] = w; }
-    const sample = cands.slice(0, 200), good = [];
-    for (let i = 0; i < sample.length && POOL.length < PX_CAP; i += 120) {
+    const sample = cands.slice(0, 600), good = []; // v1.3.7: 200→600
+    for (let i = 0; i < sample.length && POOL.length < PX_CAP; i += 200) { // v1.3.7: 120→200-ব্যাচ
       const res = await Promise.all(sample.slice(i, i + 120).map(px => new Promise(r2 => { const t0 = Date.now(); proxiedGet(px, PX_PROBE_URL, 4000).then(() => { const ms = Date.now() - t0; r2(ms < 2500 ? { px, ms } : null); }).catch(() => r2(null)); })));
       for (const g of res) if (g) good.push(g);
     }
@@ -249,7 +249,7 @@ const server = http.createServer((req, res) => {
   }
   if (u.pathname === '/register' && req.method === 'POST') return body(j => { const kb = keyOf(req, u), ks = spaceByKey(kb); if (kb && !ks) return jout(403, { ok: 0, err: 'key?' }); const src = ks || norm(j.src); if (!src || (!j.url && !j.tokencheck) || (j.url && !/^https?:\/\//.test(j.url))) return jout(400, { ok: 0, err: 'src+url?' }); if (isUser(src)) return jout(403, { ok: 0, err: 'user-space-দিয়ে-/my/conditions' }); const S = space(src); S.url = j.url ? String(j.url) : ''; S.min = Math.max(1, Number(j.min) || 1); if (j.contains) S.contains = String(j.contains); if (j.home) S.home = String(j.home); S.tokencheck = j.tokencheck ? true : undefined; if (S.url && S.tokencheck) S.tokencheck = undefined; saveCond(); console.log('[register] ' + src + (ks ? ' (কী-দ্বারা)' : '') + ' → ' + S.url.slice(0, 60)); return jout(200, { ok: 1, src, spaces: Object.keys(SPACES) }); });
   if (u.pathname === '/pool') return jout(200, POOL.map(c => Object.assign({}, c, PX_RUN.get(c.px) || {}, { sp: Object.keys(SPACES).filter(k => SPACES[k].set.has(c.px) && !isUser(k)) })));
-  if (u.pathname === '/pick') { const kb = keyOf(req, u), ks = spaceByKey(kb); if (kb && !ks) return jout(403, { ok: 0, err: 'key?' }); const src = ks || norm(u.searchParams.get('src')) || 'vidy'; const n = Math.min(12, Number(u.searchParams.get('n')) || 5);
+  if (u.pathname === '/pick') { const kb = keyOf(req, u), ks = spaceByKey(kb); if (kb && !ks) return jout(403, { ok: 0, err: 'key?' }); const src = ks || norm(u.searchParams.get('src')) || 'vidy'; const n = Math.min(40, Number(u.searchParams.get('n')) || 12); // v1.3.7: 12→40
     const srt = POOL.slice().sort((a, b) => pxScore(a.px, a.ms) - pxScore(b.px, b.ms));
     const S = space(src); const own = srt.filter(c => S.set.has(c.px)); const rest = srt.filter(c => !S.set.has(c.px));
     return jout(200, { src, pick: own.concat(rest).slice(0, n).map(c => ({ px: c.px, ms: c.ms || null, own: S.set.has(c.px) })) }); }
@@ -287,4 +287,4 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, '0.0.0.0', () => console.log('[poolhub] ' + VERSION + ' on :' + PORT + ' | পুল=' + POOL.length + ' | স্পেস: ' + Object.keys(SPACES).map(k => k + '=' + SPACES[k].set.size).join(' ') + ' | কী: ' + KEY_FILE + ' | অ্যাডমিন: ' + ADMIN_FILE));
 setTimeout(probePool, 3000).unref(); setInterval(probePool, 180000).unref();
 setTimeout(() => { const loop = () => setTimeout(() => { Promise.resolve(wave()).catch(() => { }).finally(loop); }, 8000); loop(); }, 5000).unref();
-setTimeout(enrich, 20000).unref(); setInterval(enrich, 420000).unref();
+setTimeout(enrich, 8000).unref(); setInterval(enrich, 90000).unref(); // v1.3.7: 20s/7min→8s/90s (আক্রমণাত্মক-ফসল — CPU/র‍্যাম-প্রচুর)
